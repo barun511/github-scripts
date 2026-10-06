@@ -3,6 +3,7 @@
 module Main (main) where
 
 import Control.Concurrent (threadDelay)
+import Control.Exception (AsyncException (UserInterrupt), Exception (fromException), IOException, SomeException, handle, throwIO)
 import Data.List.Split (splitOn)
 import Data.Text (pack, strip, unpack)
 import System.Environment (getArgs)
@@ -46,10 +47,14 @@ mergeAllBookmarks (bookmark : remaining) maybeRebaseChangeId = do
       mergeAllBookmarks (bookmark : remaining) Nothing
 
 pullAndRebaseStack :: String -> IO ()
-pullAndRebaseStack changeIdToRebase = callCommand "jj git fetch" >>= (\_ -> callCommand $ "jj rebase -s " ++ changeIdToRebase ++ " -d master")
+pullAndRebaseStack changeIdToRebase =
+  callCommand "jj git fetch"
+    >>= (\_ -> callCommand $ "jj rebase -s " ++ changeIdToRebase ++ " -d master")
+    >>= (\_ -> callCommand $ "jj git push -r " ++ changeIdToRebase ++ "::")
 
 waitUntilBookmarkHasMerged :: String -> IO ()
 waitUntilBookmarkHasMerged bookmark = do
+  putStrLn $ "Waiting for bookmark " ++ bookmark ++ " to merge"
   hasMerged <- hasBookmarkMerged bookmark
   case hasMerged of
     True -> return ()
@@ -73,16 +78,24 @@ getNextChangeId bookmark = readCreateProcess (shell $ "jj log -r " ++ bookmark +
 isBookmarkReadyToMerge :: String -> IO Bool
 isBookmarkReadyToMerge bookmark = do
   isBaseMaster <- getBaseForBookmark bookmark >>= (\x -> pure $ x == "master")
-  areChecksPassing <- areChecksPassingForBookmark bookmark
+  areChecksPassing <- handle checksPassingHandler $ areChecksPassingForBookmark bookmark
   return $ isBaseMaster && areChecksPassing
+
+checksPassingHandler :: SomeException -> IO Bool
+checksPassingHandler exception
+  | (fromException exception) == Just UserInterrupt = throwIO exception
+  | otherwise = return False
 
 areChecksPassingForBookmark :: String -> IO Bool
 areChecksPassingForBookmark bookmark = do
-  checks <-
+  checksArray <-
     readCreateProcess (shell $ "gh pr checks " ++ bookmark ++ " --json 'bucket' --jq '.[].bucket'") ""
-      >>= (\x -> return $ init $ splitOn "\n" x)
-  putStrLn $ "Checks for bookmark " ++ bookmark ++ ":" ++ (show checks)
-  return $ all (\x -> x == "pass") checks
+      >>= (\x -> return $ splitOn "\n" x)
+  case length checksArray of
+    1 -> pure False
+    _ -> do
+      putStrLn $ "Checks for bookmark " ++ bookmark ++ ":" ++ (show $ init checksArray)
+      return $ all (\x -> x == "pass") $ init checksArray
 
 getBaseForBookmark :: String -> IO String
 getBaseForBookmark bookmark = do
