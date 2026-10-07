@@ -3,12 +3,12 @@
 module Main (main) where
 
 import Control.Concurrent (threadDelay)
-import Control.Exception (AsyncException (UserInterrupt), Exception (fromException), IOException, SomeException, handle, throwIO)
+import Control.Exception (AsyncException (UserInterrupt), Exception (fromException), SomeException, handle, throwIO)
 import Data.List.Split (splitOn)
 import Data.Text (pack, strip, unpack)
 import System.Environment (getArgs)
-import System.Exit (exitFailure, exitSuccess)
-import System.Process (callCommand, readCreateProcess, runCommand, shell)
+import System.Exit (exitFailure)
+import System.Process (callCommand, readCreateProcess, shell)
 
 oneSecond :: Int
 oneSecond = 1000000
@@ -29,26 +29,31 @@ parse _ = do
   exitFailure
 
 mergeAllBookmarks :: [String] -> Maybe String -> Maybe String -> IO ()
-mergeAllBookmarks [] _ _ = exitSuccess
+mergeAllBookmarks [] maybeRebaseChangeId maybeDeleteChangeId = do
+  maybeHandleRebaseAndDelete maybeRebaseChangeId maybeDeleteChangeId
 mergeAllBookmarks (bookmark : remaining) maybeRebaseChangeId maybeDeleteChangeId = do
+  maybeHandleRebaseAndDelete maybeRebaseChangeId maybeDeleteChangeId
+  ready <- isBookmarkReadyToMerge bookmark
+  case ready of
+    True -> do
+      maybeChangeIdToRebase <- maybeGetNextChangeId bookmark
+      changeIdToDelete <- getCurrentChangeId bookmark
+      addToMergeQueue bookmark
+      waitUntilBookmarkHasMerged bookmark
+      mergeAllBookmarks remaining maybeChangeIdToRebase (Just changeIdToDelete)
+    False -> do
+      putStrLn $ "Bookmark " ++ bookmark ++ " not ready to merge yet, waiting 5 seconds."
+      threadDelay $ oneSecond * 5
+      mergeAllBookmarks (bookmark : remaining) Nothing Nothing
+
+maybeHandleRebaseAndDelete :: Maybe String -> Maybe String -> IO ()
+maybeHandleRebaseAndDelete maybeRebaseChangeId maybeDeleteChangeId = do
   case maybeRebaseChangeId of
     Just rebaseChangeId -> pullAndRebaseStack rebaseChangeId
     Nothing -> pure ()
   case maybeDeleteChangeId of
     Just changeIdToDelete -> abandonChangeId changeIdToDelete
     Nothing -> pure ()
-  ready <- isBookmarkReadyToMerge bookmark
-  case ready of
-    True -> do
-      changeIdToRebase <- getNextChangeId bookmark
-      changeIdToDelete <- getCurrentChangeId bookmark
-      addToMergeQueue bookmark
-      waitUntilBookmarkHasMerged bookmark
-      mergeAllBookmarks remaining (Just changeIdToRebase) (Just changeIdToDelete)
-    False -> do
-      putStrLn $ "Bookmark " ++ bookmark ++ " not ready to merge yet, waiting 5 seconds."
-      threadDelay $ oneSecond * 5
-      mergeAllBookmarks (bookmark : remaining) Nothing Nothing
 
 abandonChangeId :: String -> IO ()
 abandonChangeId changeIdToDelete = callCommand $ "jj abandon " ++ changeIdToDelete
@@ -79,8 +84,10 @@ addToMergeQueue :: String -> IO ()
 addToMergeQueue bookmark = do
   callCommand $ "gh pr merge " ++ bookmark
 
-getNextChangeId :: String -> IO String
-getNextChangeId bookmark = readCreateProcess (shell $ "jj log -r " ++ bookmark ++ "+ -T 'change_id' -G") ""
+maybeGetNextChangeId :: String -> IO (Maybe String)
+maybeGetNextChangeId bookmark =
+  readCreateProcess (shell $ "jj log -r " ++ bookmark ++ "+ -T 'change_id' -G") ""
+    >>= (\x -> pure $ if x == "" then Nothing else Just x)
 
 getCurrentChangeId :: String -> IO String
 getCurrentChangeId bookmark = readCreateProcess (shell $ "jj log -r " ++ bookmark ++ " -T 'change_id' -G") ""
