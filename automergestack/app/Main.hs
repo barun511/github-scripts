@@ -22,29 +22,36 @@ parse [] = do
   exitFailure
 parse [revset] = do
   bookmarks <- getOrderedBookmarksForRevset revset
-  mergeAllBookmarks bookmarks Nothing
+  mergeAllBookmarks bookmarks Nothing Nothing
   exitFailure
 parse _ = do
   putStrLn "Too many arguments, this function only accepts one revset"
   exitFailure
 
-mergeAllBookmarks :: [String] -> Maybe String -> IO ()
-mergeAllBookmarks [] _ = exitSuccess
-mergeAllBookmarks (bookmark : remaining) maybeRebaseChangeId = do
+mergeAllBookmarks :: [String] -> Maybe String -> Maybe String -> IO ()
+mergeAllBookmarks [] _ _ = exitSuccess
+mergeAllBookmarks (bookmark : remaining) maybeRebaseChangeId maybeDeleteChangeId = do
   case maybeRebaseChangeId of
     Just rebaseChangeId -> pullAndRebaseStack rebaseChangeId
+    Nothing -> pure ()
+  case maybeDeleteChangeId of
+    Just changeIdToDelete -> abandonChangeId changeIdToDelete
     Nothing -> pure ()
   ready <- isBookmarkReadyToMerge bookmark
   case ready of
     True -> do
       changeIdToRebase <- getNextChangeId bookmark
-      mergeSingleBookmark bookmark
+      changeIdToDelete <- getCurrentChangeId bookmark
+      addToMergeQueue bookmark
       waitUntilBookmarkHasMerged bookmark
-      mergeAllBookmarks remaining $ Just changeIdToRebase
+      mergeAllBookmarks remaining (Just changeIdToRebase) (Just changeIdToDelete)
     False -> do
       putStrLn $ "Bookmark " ++ bookmark ++ " not ready to merge yet, waiting 5 seconds."
       threadDelay $ oneSecond * 5
-      mergeAllBookmarks (bookmark : remaining) Nothing
+      mergeAllBookmarks (bookmark : remaining) Nothing Nothing
+
+abandonChangeId :: String -> IO ()
+abandonChangeId changeIdToDelete = callCommand $ "jj abandon " ++ changeIdToDelete
 
 pullAndRebaseStack :: String -> IO ()
 pullAndRebaseStack changeIdToRebase =
@@ -68,12 +75,15 @@ hasBookmarkMerged bookmark = do
   hasMergeCommit <- readCreateProcess process "" >>= (\x -> pure $ unpack $ strip $ pack x) >>= (\x -> pure $ x /= "")
   return hasMergeCommit
 
-mergeSingleBookmark :: String -> IO ()
-mergeSingleBookmark bookmark = do
+addToMergeQueue :: String -> IO ()
+addToMergeQueue bookmark = do
   callCommand $ "gh pr merge " ++ bookmark
 
 getNextChangeId :: String -> IO String
 getNextChangeId bookmark = readCreateProcess (shell $ "jj log -r " ++ bookmark ++ "+ -T 'change_id' -G") ""
+
+getCurrentChangeId :: String -> IO String
+getCurrentChangeId bookmark = readCreateProcess (shell $ "jj log -r " ++ bookmark ++ " -T 'change_id' -G") ""
 
 isBookmarkReadyToMerge :: String -> IO Bool
 isBookmarkReadyToMerge bookmark = do
