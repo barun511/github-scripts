@@ -7,7 +7,7 @@ import Control.Exception (AsyncException (UserInterrupt), Exception (fromExcepti
 import Data.List.Split (splitOn)
 import Data.Text (pack, strip, unpack)
 import System.Environment (getArgs)
-import System.Exit (exitFailure)
+import System.Exit (exitFailure, exitSuccess)
 import System.Process (callCommand, readCreateProcess, shell)
 
 oneSecond :: Int
@@ -23,7 +23,7 @@ parse [] = do
 parse [revset] = do
   bookmarks <- getOrderedBookmarksForRevset revset
   mergeAllBookmarks bookmarks Nothing Nothing
-  exitFailure
+  exitSuccess
 parse _ = do
   putStrLn "Too many arguments, this function only accepts one revset"
   exitFailure
