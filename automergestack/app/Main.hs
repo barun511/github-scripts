@@ -6,6 +6,7 @@ import Control.Concurrent (threadDelay)
 import Control.Exception (AsyncException (UserInterrupt), Exception (fromException), SomeException, handle, throwIO)
 import Data.List.Split (splitOn)
 import Data.Text (pack, strip, unpack)
+import JJLib (getBaseForBookmark)
 import System.Environment (getArgs)
 import System.Exit (exitFailure, exitSuccess)
 import System.Process (callCommand, readCreateProcess, shell)
@@ -97,13 +98,6 @@ isBookmarkReadyToMerge bookmark = do
   isBaseMaster <- getBaseForBookmark bookmark >>= (\x -> pure $ x == "master")
   areChecksPassing <- handle checksPassingHandler $ areChecksPassingForBookmark bookmark
   return $ isBaseMaster && areChecksPassing
-
-getBaseForBookmark :: String -> IO String
-getBaseForBookmark bookmark = do
-  let process = shell $ "gh pr view " ++ bookmark ++ " --json 'baseRefName' --jq '.baseRefName'"
-  output <- readCreateProcess process "" >>= (\x -> pure $ unpack $ strip $ pack x)
-  putStrLn $ "Found base for bookmark " ++ bookmark ++ ": " ++ output
-  return output
 
 checksPassingHandler :: SomeException -> IO Bool
 checksPassingHandler exception
