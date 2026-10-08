@@ -98,6 +98,13 @@ isBookmarkReadyToMerge bookmark = do
   areChecksPassing <- handle checksPassingHandler $ areChecksPassingForBookmark bookmark
   return $ isBaseMaster && areChecksPassing
 
+getBaseForBookmark :: String -> IO String
+getBaseForBookmark bookmark = do
+  let process = shell $ "gh pr view " ++ bookmark ++ " --json 'baseRefName' --jq '.baseRefName'"
+  output <- readCreateProcess process "" >>= (\x -> pure $ unpack $ strip $ pack x)
+  putStrLn $ "Found base for bookmark " ++ bookmark ++ ": " ++ output
+  return output
+
 checksPassingHandler :: SomeException -> IO Bool
 checksPassingHandler exception
   | (fromException exception) == Just UserInterrupt = throwIO exception
@@ -113,13 +120,6 @@ areChecksPassingForBookmark bookmark = do
     _ -> do
       putStrLn $ "Checks for bookmark " ++ bookmark ++ ":" ++ (show $ init checksArray)
       return $ all (\x -> x == "pass") $ init checksArray
-
-getBaseForBookmark :: String -> IO String
-getBaseForBookmark bookmark = do
-  let process = shell $ "gh pr view " ++ bookmark ++ " --json 'baseRefName' --jq '.baseRefName'"
-  output <- readCreateProcess process "" >>= (\x -> pure $ unpack $ strip $ pack x)
-  putStrLn $ "Found base for bookmark " ++ bookmark ++ ": " ++ output
-  return output
 
 getOrderedBookmarksForRevset :: String -> IO [String]
 getOrderedBookmarksForRevset revset = do
