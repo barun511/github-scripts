@@ -24,6 +24,8 @@ dependencies:
 - process
 - split
 - text
+- aeson
+- bytestring
 
 ghc-options:
 - -Wall
